@@ -1,0 +1,143 @@
+---
+title: "Credit Card Fraud Detection"
+output: html_notebook
+---
+
+### Objetivo ###
+
+Criar um modelo de classificacao que consiga identificar fraudes de cartoes de creditos.
+
+### Compreensao dos dados ###
+
+Este dataset contem transacoes historicas de cartoes de creditos. Contendo 284.807 transacoes e 492 fraudes detectadas.
+
+O dataset possui apenas atributos numericos que por confidencialidade possuem nomes de V1, V2.. a V28, alem da variavel time e Amount.
+
+O atriuto a ser previsto (Class) possui valores 0 e 1, sendo 0 para nao fraude e 1 para fraude.
+
+**fonte dos dados: https://www.kaggle.com/mlg-ulb/creditcardfraud**
+
+## Carregando os Modulos e Lendo os dados ## 
+
+```{r modulos}
+# carregando os modulos
+library(tidyverse)
+library(randomForest)
+library(DMwR)
+library(caret)
+library(rpart)
+library(rpart.plot)
+
+# Lendo o conjunto de dados para treinamento
+df <- read_csv("creditcard.csv", col_types = cols(.default = col_double(), Class = col_factor()))
+```
+
+## Analise Exploratoria ## 
+
+Visualização parcial do dataset
+```{r leitura}
+# Visualizando as 5 primeiras e ultimas linhas dos dados
+bind_rows(head(df),
+          tail(df))
+```
+
+Estrutura dos dados
+```{r str}
+glimpse(df)
+```
+
+Estatistica descritiva dos dados
+```{r resumo}
+summary(df)
+```
+
+Grande parte do atributo class possuem apenas o valor zero.
+
+Sera necessario balancear os dados para que o modelo consiga aprender o que seria fraude (1).
+```{r frequencia}
+# grafico de barras com o total por classe
+df %>% group_by(Class) %>%
+  summarise(total = n()) %>%
+  ggplot(aes(x = Class, y = total, fill = as.factor(total))) +
+  geom_bar(stat = "identity", show.legend = F) +
+  theme_classic() +
+  ggtitle("Total de classes")
+```
+
+A Funcao SMOTE ira gerar novos valores com base no atributo Class = 1, desta forma a base de dados passa de 28 mil linhas para 39 mil.
+
+Conforme o novo grafico, os atributos estao bem mais equilibrados.
+
+```{r smote}
+# Novo dataset com os dados balanceados
+df_smote <- SMOTE(Class ~., as.data.frame(df), perc.over = 40000, perc.under = 100) %>% as_tibble()
+
+# grafico de barras com o total por classe
+df_smote %>% group_by(Class) %>%
+  summarise(total = n()) %>%
+  ggplot(aes(x = Class, y = total, fill = total)) +
+  geom_bar(stat = "identity", show.legend = F) +
+  theme_classic() +
+  ggtitle("Total de classes")
+```
+## Criando o modelo ## 
+
+Criando dois datasets, um com 70% dos dados para criar o modelo e o outro com 30% dos dados para usar como teste.
+
+```{r split}
+# Dividindo os dados em treino e teste (70/30)
+set.seed(124)
+index <- createDataPartition(df_smote$Class, p = 0.7, list = FALSE)
+train <- df_smote[index,-1]
+test <- df_smote[-index,-1]
+```
+
+Como forma de ilustracao, a funcao "rpart" ira criar uma arvore de decisao com os atributos escolhidos ao acaso, V1, V2 e V3.
+
+```{r arvore}
+# Criando um modelo bom base em uma arvore de decisao
+model_dt <- rpart(Class ~ V1 + V2 + V3, 
+                     data = train, 
+                     method = "class")
+
+# Plotando a arvore
+prp(model_dt, type = 0, extra = 1, under = TRUE, compress = TRUE)
+```
+
+O modelo Random Forest foi criado utilizando todos os atributos dos dados de treino e 50 arvores.
+
+Aparentemente o modelo esta com overfitting, pois a taxa de erro esta proxima de 0% mediante aos dados de treino.
+```{r modelo}
+# Criando um modelo com random forest para 50 arvores
+model_rf <- randomForest(Class ~., data = train, ntree = 50)
+
+# resumo do modelo
+model_rf
+```
+## Feature Selection ## 
+
+Uma vantagem do random forest, seria a visualizacao das importancia dos atributos, permitindo que seja possivel selecionar os atributos que mais impactam no resutlado do modelo, sendo uma forma de reduzir o overfitting.
+```{r feature, fig.width = 10}
+# Selecao de atributos
+varImpPlot(model_rf)
+```
+
+Criando um novo modelo de Random Forest com os atributos selecionados
+```{r modelo_final}
+# Criando um modelo com random forest para 50 arvores
+model_rf <- randomForest(Class ~ V14 + V10 + V12 + V4 + V17, data = train, ntree = 50)
+```
+
+## Avaliando o modelo ## 
+
+Apos a criacao do novo modelo, ele sera testado com dados que nao participaram da criacao do modelo, de forma a validar sua capacidade de generalizacao.
+
+A acuracia final foi de 99%.
+```{r avaliacao}
+# Prevendo os dados de teste
+pred_rf <- predict(model_rf, test)
+
+# Matriz de confusao
+confusionMatrix(test$Class, pred_rf)
+```
+
